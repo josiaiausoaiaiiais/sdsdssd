@@ -1,0 +1,36 @@
+{
+  "summary": "Frontend-only validation of new /dashboard/studio page. All Studio UI elements, customization controls (accent presets, custom color, themes, icon style, lower-third), library picker, upload input, sidebar NEW badge, protected-route redirect, and header rendering work as expected. Only one HIGH priority issue: the BigBuckBunny demo video cannot actually load because Google's CDN response is blocked by Chrome ORB (net::ERR_BLOCKED_BY_ORB). The play button visually toggles play/pause state and events fire, but no frames render.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "BrewlyVideoPlayer (Studio.jsx)", "issue": "Demo video src https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4 is blocked by Chrome's Opaque Response Blocking (net::ERR_BLOCKED_BY_ORB). Video <source> is requested without crossorigin attribute and Google's CDN responds with Cross-Origin-Resource-Policy: cross-origin but no Access-Control-Allow-Origin for the media fetch, so the <video> element gets readyState=0, networkState=3 (NO_SOURCE). Users see a black screen when clicking play.", "selector": "[data-testid=\"player-video\"] source", "priority": "HIGH"},
+      {"component": "BrewlyVideoPlayer", "issue": "Uncaught console error 'The play() request was interrupted by a call to pause()' fires on rapid toggle (video src never loads + user clicks both center button and video surface). Should wrap v.play() in a promise and ignore AbortError.", "selector": "[data-testid=\"player-center-btn\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Video playback", "issue": "Play click triggers 'play' event (UI transitions to paused=false, center button fades) but no pixels render because underlying fetch is blocked by ORB. Pick a publicly-CORS-friendly sample (e.g. W3Schools mov_bbb.mp4, or a video hosted on the same origin) or add preload='metadata' with a same-origin fallback.", "affected_selectors": ["[data-testid=\"player-video\"]", "[data-testid=\"player-center-btn\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "/dashboard/studio player card", "issues": ["Because the video never loads, the player area shows pure black with no poster image — the poster overlay in code is gated on `!src`, but src is always set to the demo URL, so poster fallback never renders. Consider showing poster (coral→mustard gradient) when video.readyState < 2 OR onerror."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "HIGH: Replace or proxy the BigBuckBunny demo video. The googleapis URL is blocked by Chrome ORB in cross-origin contexts. Either host a short MP4 in the frontend /public folder (same-origin, no CORS) or use a CDN that sets permissive CORS+CORP headers for media (e.g. vjs.zencdn.net/v/oceans.mp4, sample-videos.com).",
+    "MEDIUM: Catch the play() promise in togglePlay to silence 'play() interrupted by pause()' console errors: `const p = v.play(); if (p) p.catch(()=>{});`.",
+    "LOW: Render the gradient poster whenever the video hasn't loaded yet (not only when src is empty), so users see something cozy instead of a black rectangle."
+  ],
+  "critical_code_review_comments": [
+    "Studio.jsx is 432 lines — fine, under the 700-line threshold, but BrewlyVideoPlayer (L36-199) could be extracted to its own component file for reuse on other pages.",
+    "The customSrc object URL created via URL.createObjectURL is never revoked — small memory leak if user uploads multiple files. Consider URL.revokeObjectURL on cleanup/next upload.",
+    "`playerSrc = customSrc || (selected ? DEMO_VIDEO : DEMO_VIDEO);` — the ternary is a no-op, both branches return DEMO_VIDEO. Presumably the intent was to play `selected.url` when a library item is chosen, but Upload objects in the library don't seem to expose a real playable URL — selecting a library card updates the 'Now editing' label to 'Demo · Brewly intro reel' rather than the card's title (confirmed in test).",
+    "Tailwind class `shadow-doodle-sm` and `bg-gradient-to-t` rely on project-specific config; verified present in design system."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "88% (14/16 review items pass; video-playback + library-selection 'Now editing' update both fail)"},
+  "test_credentials": "admin@brewly.app / admin123 (verified working)",
+  "seed_data_creation": "None — used existing admin seeded uploads (4 cards rendered in library picker, GET /api/uploads -> 200).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Studio page UI/state is solid: accent presets (coral/mustard/ink/berry/sea) correctly update the center-button background via inline style; custom color input computes HSL and applies; theme presets update player bg/fg; icon style filled/outline swaps SVG fill; lower-third input renders the '✦ <text>' chip in the player. Sidebar shows Studio with New badge and routes correctly; protected route redirects unauth'd users to /login. The single real bug is that the BigBuckBunny demo mp4 is blocked by Chrome ORB in the preview URL, so the video element never loads frames (readyState stays 0). When retesting after a fix, verify: (1) a non-blocked demo video actually plays (currentTime advances), (2) selecting a library card also updates the 'Now editing' label to that card's title (currently still shows 'Demo · Brewly intro reel'), (3) no 'play() interrupted' console errors on rapid clicks.",
+  "rca of the issue": "RCA for video black-screen: Chrome's Opaque Response Blocking (ORB) policy, enforced since Chrome 118, blocks cross-origin media responses when the server doesn't provide explicit permissive CORP/CORS headers for the resource type. BigBuckBunny.mp4 on commondatastorage.googleapis.com is served with `Cross-Origin-Resource-Policy: cross-origin` but without a matching `Access-Control-Allow-Origin` for non-OPTIONS media requests from https://landing-redesign-54.preview.emergentagent.com, so Chrome aborts the fetch with ERR_BLOCKED_BY_ORB. The <video> tag's source never loads (networkState=3 NO_SOURCE). Reproduction: open /dashboard/studio as admin, click the center play button, observe DevTools Network tab — GET BigBuckBunny.mp4 status '(failed) net::ERR_BLOCKED_BY_ORB'. Mitigation options: (a) self-host the sample MP4 under /public/brewly-demo.mp4 so it's same-origin, (b) use a CDN whose media endpoints set Access-Control-Allow-Origin: *, e.g. https://vjs.zencdn.net/v/oceans.mp4, (c) proxy the media through the FastAPI backend."
+}

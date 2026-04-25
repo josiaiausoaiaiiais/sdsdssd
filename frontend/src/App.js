@@ -8,6 +8,7 @@ import Webinars from "@/pages/Webinars";
 import Channels from "@/pages/Channels";
 import Analytics from "@/pages/Analytics";
 import Remix from "@/pages/Remix";
+import Studio from "@/pages/Studio";
 import { LoginPage, SignupPage } from "@/pages/Auth";
 import { AuthProvider, useAuth } from "@/lib/auth";
 
@@ -34,6 +35,7 @@ function App() {
             <Route path="/dashboard/channels" element={<Protected><Channels /></Protected>} />
             <Route path="/dashboard/analytics" element={<Protected><Analytics /></Protected>} />
             <Route path="/dashboard/remix" element={<Protected><Remix /></Protected>} />
+            <Route path="/dashboard/studio" element={<Protected><Studio /></Protected>} />
           </Routes>
         </AuthProvider>
       </BrowserRouter>

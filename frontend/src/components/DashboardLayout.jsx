@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import {
-  Home, Library, Heart, Radio, Tv, BarChart3, Wand2,
+  Home, Library, Heart, Radio, Tv, BarChart3, Wand2, Film,
   Search, Bell, Plus, ChevronRight, Sparkles, LogOut, User as UserIcon,
 } from "lucide-react";
 import { BrewlyLogo } from "./brewly/Illustrations";
@@ -11,10 +11,11 @@ const NAV = [
   { to: "/dashboard", label: "Home", icon: Home, end: true },
   { to: "/dashboard/library", label: "Library", icon: Library },
   { to: "/dashboard/favorites", label: "Favorites", icon: Heart },
+  { to: "/dashboard/studio", label: "Studio", icon: Film, badge: "New" },
   { to: "/dashboard/webinars", label: "Webinars", icon: Radio },
   { to: "/dashboard/channels", label: "Channels", icon: Tv },
   { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/dashboard/remix", label: "Remix", icon: Wand2, badge: "New" },
+  { to: "/dashboard/remix", label: "Remix", icon: Wand2 },
 ];
 
 const Sidebar = () => (
