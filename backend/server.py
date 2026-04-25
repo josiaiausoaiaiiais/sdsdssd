@@ -182,15 +182,24 @@ async def register(body: RegisterIn, response: Response):
 @api.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
     email = body.email.lower()
-    ip = request.client.host if request.client else "unknown"
-    ident = f"{ip}:{email}"
+    # Key on email only — behind k8s ingress request.client.host varies per request
+    ident = email
     rec = await db.login_attempts.find_one({"identifier": ident})
-    if rec and rec.get("count", 0) >= 5 and rec.get("locked_until") and rec["locked_until"] > datetime.now(timezone.utc):
-        raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
+    now = datetime.now(timezone.utc)
+    if rec and rec.get("count", 0) >= 5 and rec.get("locked_until"):
+        lu = rec["locked_until"]
+        if lu.tzinfo is None:
+            lu = lu.replace(tzinfo=timezone.utc)
+        if lu > now:
+            raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
-        await db.login_attempts.update_one({"identifier": ident}, {"$inc": {"count": 1},
-            "$set": {"locked_until": datetime.now(timezone.utc) + timedelta(minutes=15)}}, upsert=True)
+        existing = await db.login_attempts.find_one({"identifier": ident})
+        new_count = (existing.get("count", 0) if existing else 0) + 1
+        update = {"$set": {"count": new_count}}
+        if new_count >= 5:
+            update["$set"]["locked_until"] = datetime.now(timezone.utc) + timedelta(minutes=15)
+        await db.login_attempts.update_one({"identifier": ident}, update, upsert=True)
         raise HTTPException(401, "Invalid email or password")
     await db.login_attempts.delete_one({"identifier": ident})
     uid = str(user["_id"])
@@ -277,12 +286,15 @@ async def list_favorites(user: dict = Depends(get_current_user)):
 
 @api.post("/favorites")
 async def add_favorite(body: FavoriteIn, user: dict = Depends(get_current_user)):
-    try:
-        await db.favorites.update_one(
-            {"user_id": user["id"], "upload_id": body.upload_id},
-            {"$set": {"created_at": datetime.now(timezone.utc)}}, upsert=True)
-    except Exception:
-        pass
+    # Validate the upload exists and belongs to the current user
+    if not ObjectId.is_valid(body.upload_id):
+        raise HTTPException(400, "Invalid upload id")
+    upload = await db.uploads.find_one({"_id": ObjectId(body.upload_id), "user_id": user["id"]})
+    if not upload:
+        raise HTTPException(404, "Upload not found")
+    await db.favorites.update_one(
+        {"user_id": user["id"], "upload_id": body.upload_id},
+        {"$set": {"created_at": datetime.now(timezone.utc)}}, upsert=True)
     return {"ok": True}
 
 @api.delete("/favorites/{upload_id}")

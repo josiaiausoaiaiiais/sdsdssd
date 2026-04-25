@@ -1,61 +1,68 @@
 # Brewly — PRD
 
 ## Original Problem Statement
-User wants their homepage + dashboard styled classier per an uploaded Brewly style guide. Follow-up: make all six dashboard features (Library, Favorites, Webinars, Channels, Analytics, Remix) share the exact same visual style as Home + Landing — while delivering the stated feature functionality.
-
-## Style Source of Truth
-`brewly-style-guide-and-agent-prompt.md` — warm mint background, coral + mustard accents, deep-ink borders, doodle-card aesthetic, Fraunces + Nunito typography, pill buttons with 4px offset shadow, italic coral accent words in headlines.
+User wants Brewly creator-monetization app: classy homepage + dashboard with 6 feature pages, real per-user data, JWT auth, and supporting integrations.
 
 ## Tech Stack
-React 19 (CRA + CRACO) · Tailwind v3 · lucide-react · FastAPI backend (untouched). All data mocked client-side — no third-party integrations yet.
-
-## Architecture
-- Shared **`DashboardLayout`** (`src/components/DashboardLayout.jsx`) wraps every dashboard page with the ink Sidebar + pill TopBar + `PageHeader`
-- Shared media primitives in `src/components/brewly/MediaPrimitives.jsx`: `VideoThumb`, `VideoCard`, `FilterPill`, `EmptyState`
-- Brewly tokens, `doodle-card/pill/btn` utilities, Fraunces/Nunito, float/wiggle animations in `src/index.css`
+React 19 + Tailwind v3 + lucide-react · FastAPI + Motor (async MongoDB) · JWT email/password auth via httpOnly cookies.
 
 ## Routes
-| Path | File | Purpose |
+| Path | Auth | Purpose |
 |---|---|---|
-| `/` | `pages/Landing.jsx` | Classy hero-focused landing |
-| `/dashboard` | `pages/Dashboard.jsx` | Greeting card + stats + recent uploads |
-| `/dashboard/library` | `pages/Library.jsx` | Uploaded videos + search + folder organization + grid/list toggle |
-| `/dashboard/favorites` | `pages/Favorites.jsx` | Saved videos shelf with filters + unfavorite heart |
-| `/dashboard/webinars` | `pages/Webinars.jsx` | Next-up hero card, Upcoming/Past/Automated tabs, Live + evergreen |
-| `/dashboard/channels` | `pages/Channels.jsx` | Branded embeddable playlists with embed-preview mock |
-| `/dashboard/analytics` | `pages/Analytics.jsx` | KPIs, views area chart, engagement heatmap, top performers |
-| `/dashboard/remix` | `pages/Remix.jsx` | AI clip remixer — dropzone + style/ratio picker + generated clip grid |
+| `/` | public | Landing: Hero + How it works (3 steps) + Pricing (Free/Gold, monthly/yearly toggle) + Footer |
+| `/login`, `/signup` | public | Split-screen ink + cream auth forms |
+| `/dashboard` | protected | Greeting + 4 stat cards + recent uploads (real per-user data) |
+| `/dashboard/library` | protected | Real user uploads, search, folders, grid/list, add/delete, favorite toggle |
+| `/dashboard/favorites` | protected | Real user favorites with empty state |
+| `/dashboard/webinars` | protected | UI complete (data mocked — Phase 2 needs LiveKit/Daily) |
+| `/dashboard/channels` | protected | UI complete (mocked) |
+| `/dashboard/analytics` | protected | UI complete (mocked) |
+| `/dashboard/remix` | protected | UI complete (mocked — Phase 2 needs fal.ai) |
 
-## Visual Consistency Guarantees
-- Every page uses the same Sidebar (active coral pill, Remix NEW badge, Pro-tip card), same TopBar (pill search, bell, Create primary, avatar pill), same `PageHeader` eyebrow+italic-accent-headline pattern
-- All cards use `.doodle-card` / `.doodle-card-lg` — no raw `bg-white`
-- All buttons are `.doodle-btn` pill-shaped with ink 2px border + 4px coral-or-ink offset shadow
-- Filter pills share a single `FilterPill` component with consistent active=coral / inactive=surface behavior
-- Gradients across thumbnails/banners always draw from the coral → mustard / ink → mint palette tokens
+## Backend API
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| POST `/api/auth/register` | — | Creates user + auto-seeds metrics + 4 sample uploads |
+| POST `/api/auth/login` | — | Email-keyed brute-force lockout (5 attempts → 15min) |
+| POST `/api/auth/logout` | ✓ | Clears httpOnly cookies |
+| GET `/api/auth/me` | ✓ | Returns current user |
+| GET `/api/dashboard/metrics` | ✓ | Per-user earnings/views/fans/streak (deterministic via `random.Random(user_id)`) |
+| GET/POST `/api/uploads`, DELETE `/api/uploads/{id}` | ✓ | Per-user uploads CRUD |
+| GET/POST `/api/favorites`, DELETE `/api/favorites/{id}` | ✓ | Per-user favorites; POST validates upload ownership |
+
+## Architecture
+- `server.py` — single-file FastAPI with all routers, JWT helpers, seed logic
+- `lib/auth.jsx` — AuthProvider + useAuth hook + axios.defaults.withCredentials
+- `lib/data.js` — useMetrics, useUploads, useFavorites hooks
+- `pages/Auth.jsx` — shared AuthShell wrapping LoginPage + SignupPage
+- `components/DashboardLayout.jsx` — Sidebar + TopBar (with avatar dropdown → logout) shared by every dashboard page
+
+## Test Credentials (also in /app/memory/test_credentials.md)
+- Admin: `admin@brewly.app` / `admin123`
+- Cookies: httpOnly + secure + samesite=none
 
 ## Implemented (Jan 2026)
-- Brewly tokens + typography + animations
-- Landing hero with illustrated mug + 3 floating chips + 5-star proof + trust strip
-- Home dashboard: greeting card with streak chip, 4 KPI cards, recent uploads list
-- Library: search + 5 folders + grid/list toggle + sort + 9 seeded videos
-- Favorites: 4-card stat strip + 5 filter tabs + 6 saved videos with unfavorite toggle
-- Webinars: Next-up live hero, Upcoming/Past/Automated tabs, 3 upcoming + 3 past sessions + automation empty state
-- Channels: featured channel with embed-preview browser mock + 4 channel cards with copy/embed actions
-- Analytics: 4 KPIs + SVG area chart (12 weeks) + SVG heatmap (24 bars) + Top 4 performers ranking
-- Remix: big AI dropzone + 5 clip styles + 3 aspect ratios + 4 "freshly clipped" short-form outputs with AI score chips
+- ✅ JWT auth (register, login, logout, me, brute-force lockout)
+- ✅ Per-user data (metrics + uploads + favorites isolated by user_id, deterministic seeding)
+- ✅ Login/Signup pages matching Brewly aesthetic
+- ✅ Protected routes redirect to /login
+- ✅ Avatar dropdown with logout
+- ✅ Landing: How it works (3 numbered doodle-cards with hand-drawn SVG mug/heart/sparkle illos), Pricing (monthly/yearly toggle, Free + Brewly Gold tiers, ink-emphasized Gold card), 5-col Footer with socials
+- ✅ Library: real CRUD with search, folder filters, grid/list toggle, favorite + delete actions
+- ✅ Favorites: real backend, empty state, filter tabs
+- ✅ Dashboard home wired to real metrics + recent uploads
 
-## Compliance
-- No dark-on-dark or dark-on-background collisions — all contrast pairs are token-enforced
-- Every interactive + critical element has a unique `data-testid`
-- Single `<h1>` per page, meaningful focus rings, motion reduced to hero/chip moments
+## Backend QA Results (testing agent iteration_1)
+- 18/19 backend pytest pass (95%) → after fixes: brute-force lockout now triggers correctly (verified via curl)
+- Per-user data isolation confirmed in UI: admin sees $2,349 / 28.9k / 464 / 4-day; new user sees different unique numbers
+- Favorites validation now rejects non-existent or other-user upload IDs (400 / 404)
 
-## Backlog / P1
-- Persistent storage (`useGenerations` localStorage hook)
-- Auth pages (`/login`, `/signup`)
-- Wire real upload → remix AI pipeline (requires video-intelligence integration)
-- Real webinar rooms (requires livekit/daily integration)
+## Phase 2 (deferred — waiting on keys)
+- **Remix** → fal.ai video clip generation (needs `FAL_KEY`)
+- **Webinars** → LiveKit or Daily.co (needs API key + secret)
 
-## Next Action Items
-- Offer: add the "just tipped" ticker to the landing hero
-- Wire real persistence for uploads + favorites
-- Hook Remix to an actual AI clip-generation provider when user is ready
+## Backlog
+- Password reset flow (`/forgot-password`, `/reset-password`)
+- Profile settings page
+- Real channel embed page (`/c/:slug`)
+- Webinars/Channels/Analytics → real per-user data when integrations land
