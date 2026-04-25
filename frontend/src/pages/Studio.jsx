@@ -10,7 +10,7 @@ import { useUploads, fmtDuration } from "../lib/data";
 /* Demo coral→mustard placeholder if user hasn't picked anything yet.
    Plays as a poster + animated SVG since we don't have real media. */
 const DEMO_POSTER = "linear-gradient(135deg, hsl(8 85% 67%), hsl(45 95% 65%))";
-const DEMO_VIDEO = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
+const DEMO_VIDEO = "https://vjs.zencdn.net/v/oceans.mp4";
 
 const ACCENT_PRESETS = [
   { id: "coral",   name: "Coral",   hsl: "8 85% 67%",   onColor: "40 50% 98%" },
@@ -41,6 +41,7 @@ function BrewlyVideoPlayer({ src, poster, accent, theme, iconStyle, lowerThird }
   const [muted, setMuted] = useState(false);
   const [showCenter, setShowCenter] = useState(true);
   const [fading, setFading] = useState(false);
+  const [ready, setReady] = useState(false);
 
   const accentVar = `hsl(${accent.hsl})`;
   const onAccent = `hsl(${accent.onColor})`;
@@ -52,16 +53,19 @@ function BrewlyVideoPlayer({ src, poster, accent, theme, iconStyle, lowerThird }
     const v = videoRef.current;
     if (!v) return;
     const onTime = () => setProgress(v.currentTime);
-    const onMeta = () => setDuration(v.duration || 0);
+    const onMeta = () => { setDuration(v.duration || 0); setReady(v.readyState >= 2); };
+    const onCanPlay = () => setReady(true);
     const onPlay = () => { setPlaying(true); setFading(true); setTimeout(() => setShowCenter(false), 250); };
     const onPause = () => { setPlaying(false); setFading(false); setShowCenter(true); };
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("canplay", onCanPlay);
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     return () => {
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("canplay", onCanPlay);
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
     };
@@ -71,13 +75,18 @@ function BrewlyVideoPlayer({ src, poster, accent, theme, iconStyle, lowerThird }
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    setPlaying(false); setProgress(0); setShowCenter(true); setFading(false);
+    setPlaying(false); setProgress(0); setShowCenter(true); setFading(false); setReady(false);
     v.load();
   }, [src]);
 
   const togglePlay = () => {
     const v = videoRef.current; if (!v) return;
-    if (v.paused) v.play(); else v.pause();
+    if (v.paused) {
+      const p = v.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } else {
+      v.pause();
+    }
   };
   const seek = (sec) => { const v = videoRef.current; if (v) v.currentTime = clamp(sec, 0, duration || 0); };
   const onScrub = (e) => {
@@ -120,9 +129,9 @@ function BrewlyVideoPlayer({ src, poster, accent, theme, iconStyle, lowerThird }
         <source src={src} />
       </video>
 
-      {/* Poster overlay when video has no preview yet */}
-      {!src && (
-        <div className="absolute inset-0 flex items-center justify-center cursor-pointer pointer-events-none"
+      {/* Poster overlay shown while video isn't ready yet */}
+      {!ready && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none"
              style={{ background: poster || DEMO_POSTER }}>
           <svg className="absolute inset-0 h-full w-full" viewBox="0 0 600 340" fill="none" aria-hidden="true">
             <path d="M30 240 Q120 200 220 240 T420 240 T600 240" stroke="hsl(var(--surface))" strokeWidth="3" opacity="0.5" fill="none" strokeLinecap="round" />
@@ -226,12 +235,13 @@ export default function StudioPage() {
     (uploads || []).find(u => u.id === selectedId) || null,
   [uploads, selectedId]);
 
-  const playerSrc = customSrc || (selected ? DEMO_VIDEO : DEMO_VIDEO);
+  const playerSrc = customSrc || DEMO_VIDEO;
   const posterBg = selected?.thumbnail || DEMO_POSTER;
 
   const handleFile = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    if (customSrc && customSrc.startsWith("blob:")) URL.revokeObjectURL(customSrc);
     const url = URL.createObjectURL(f);
     setCustomSrc(url);
     setSelectedId(null);

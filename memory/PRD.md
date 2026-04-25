@@ -14,6 +14,7 @@ React 19 + Tailwind v3 + lucide-react · FastAPI + Motor (async MongoDB) · JWT 
 | `/dashboard` | protected | Greeting + 4 stat cards + recent uploads (real per-user data) |
 | `/dashboard/library` | protected | Real user uploads, search, folders, grid/list, add/delete, favorite toggle |
 | `/dashboard/favorites` | protected | Real user favorites with empty state |
+| `/dashboard/studio` | protected | Video player customizer — upload/library pick, accent/theme/icon-style/lower-third controls, click-middle-to-play, branded export-ready preview |
 | `/dashboard/webinars` | protected | UI complete (data mocked — Phase 2 needs LiveKit/Daily) |
 | `/dashboard/channels` | protected | UI complete (mocked) |
 | `/dashboard/analytics` | protected | UI complete (mocked) |
@@ -51,6 +52,7 @@ React 19 + Tailwind v3 + lucide-react · FastAPI + Motor (async MongoDB) · JWT 
 - ✅ Library: real CRUD with search, folder filters, grid/list toggle, favorite + delete actions
 - ✅ Favorites: real backend, empty state, filter tabs
 - ✅ Dashboard home wired to real metrics + recent uploads
+- ✅ **Studio (`/dashboard/studio`)** — custom HTML5 video player with click-middle-to-play, centered play/pause overlay, bottom controls (play, ±10s seek, mute, scrubber, fullscreen, time), library picker grid, file upload with object-URL cleanup, accent color presets + custom hex picker (auto-converted to HSL), theme presets (cream/ink/mint), icon style toggle (filled/outline), customizable lower-third title chip, live preview summary, gradient poster while video loads
 
 ## Backend QA Results (testing agent iteration_1)
 - 18/19 backend pytest pass (95%) → after fixes: brute-force lockout now triggers correctly (verified via curl)
