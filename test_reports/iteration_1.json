@@ -1,0 +1,63 @@
+{
+  "summary": "Brewly Phase-1 QA: backend 18/19 pytest pass (95%); 1 real bug (brute-force lockout never triggers behind k8s ingress because request.client.host returns the upstream pod IP that varies per request, splitting the count across rows). Frontend: landing (hero+how-it-works+pricing+footer) renders, pricing monthly/yearly toggle works ($9->$7), /login admin->dashboard works, /signup creates user and lands on dashboard, per-user data isolation CONFIRMED in UI (admin sees $2,349 / 28.9k / 464 / 4-day streak; new user nora sees $998 / 28.4k / 116 / 7-day streak), all 4 secondary pages (webinars/channels/analytics/remix) render, protected route redirects to /login when logged out. Could not fully verify in-UI favorite toggle and avatar->logout dropdown due to missing data-testid on those interactive elements.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "Brute-force lockout NEVER triggers. Identifier is f'{request.client.host}:{email}' but behind the k8s ingress request.client.host is the upstream proxy pod IP (10.219.1.109 / 10.219.1.110 ... varies per request). Counts are split across rows, each capping at 5, so the >=5 check is never satisfied. Verified empirically: 10 wrong logins in a row all returned 401, never 429. Mongo shows multiple login_attempts rows per email each with count=5.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/favorites",
+        "issue": "Endpoint accepts ANY upload_id string (no validation that the upload exists or belongs to the user). A user can favorite another user's upload_id; GET /favorites then resolves it via uploads._id and would return the other user's video."
+      },
+      {
+        "endpoint": "CORS",
+        "issue": "allow_origins falls back to 'http://localhost:3000' if FRONTEND_URL missing; preview URL is hard-coded in backend/.env. Works today but brittle."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TopBar avatar / user menu", "issue": "Avatar pill is not a <button> in a <header> tag and has no data-testid. Could not open the user dropdown via standard selectors so logout-via-UI could not be verified end-to-end (logout API itself works in backend tests).", "selector": "header button (none found)", "priority": "MEDIUM"},
+      {"component": "Library card heart toggle", "issue": "No data-testid on heart/favorite buttons. After clicking what looked like the first heart on /dashboard/library, /dashboard/favorites still showed 'No favorites yet' and 'SAVED 0' — could be wrong selector OR the toggle isn't wired. Recommend adding data-testid='favorite-toggle-{id}' so this is testable.", "selector": "svg.lucide-heart", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Library favorite -> Favorites page", "issue": "Could not positively confirm in UI; backend favorites API works in pytest. Needs retest after data-testid added.", "affected_selectors": ["heart button on library cards"]}
+    ],
+    "design_issues": [
+      {"screen": "Dashboard greeting for admin", "issues": ["Greeting uses first word of name => 'Morning, Brewly' for admin (name = 'Brewly Admin'). Cosmetic — consider using first name or a friendlier fallback."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix brute-force lockout: derive client IP from X-Forwarded-For (first hop) or, better, key login_attempts only on the email (or a hash of it) so the count cannot be split. Then reset lockout TTL via a separate field and gate purely on count.",
+    "Validate POST /api/favorites: ensure upload_id exists and belongs to current_user before upserting.",
+    "Add data-testid attributes to: topbar avatar/menu, logout button, library-card root + favorite-toggle + delete-trash, library upload button, login/signup form inputs and submit buttons, pricing toggle.",
+    "Manually re-verify favorite-toggle integration after testids are added."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 300 lines and mixes auth helpers, models, seeding, routes, CORS — split into routers/auth.py, routers/uploads.py, routers/favorites.py, services/seed.py once it grows further.",
+    "CORSMiddleware is added AFTER include_router; FastAPI applies middleware in reverse add order so it still works, but convention is to add middleware before mounting routers.",
+    "create_upload uses random.randint instead of secrets/Random(user_id) — fine, but the global random.randint is non-deterministic and irrelevant to seeding (only used for thumbnail fallback).",
+    "Login lockout: writing locked_until on every failed attempt continually pushes the unlock time forward. Acceptable but means a slowly-typing user gets effectively permanent lockout once over the threshold.",
+    "verify_password is called inside an async route synchronously — bcrypt is CPU-bound; under load this blocks the event loop. Consider running in a threadpool (asyncio.to_thread).",
+    "GET /favorites loads upload docs but does not preserve favorite ordering and silently drops invalid ObjectIds."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/__init__.py"
+  ],
+  "success_rate": {"backend": "95% (18/19)", "frontend": "~85% (logout-via-UI and library->favorites toggle unverified)"},
+  "test_credentials": "Admin admin@brewly.app / admin123 works. New users created via UI signup auto-login and redirect to /dashboard with unique seeded data.",
+  "seed_data_creation": "Tests created several TEST_*@brewly.app users + TEST_my_clip / TEST_to_delete uploads under those users. No production data modified.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Key per-user data isolation already verified both at API level (test_metrics_unique_per_user, test_uploads_isolated_per_user) and in UI (admin $2,349 vs nora $998). The brute-force fix should be re-tested by hitting POST /api/auth/login 7 times with wrong password against a freshly registered email and asserting the 6th+ returns 429. Favorites UI flow needs data-testid before it can be Playwright-tested reliably.",
+  "rca of the issue": "BRUTE-FORCE LOCKOUT: Reproduction => register a fresh user, then POST /api/auth/login with wrong password 10x in a row against the public preview URL — every response is 401. Mongo's login_attempts collection shows multiple rows per email, each with identifier '<podIP>:<email>' and count<=5. Root cause: behind the K8s ingress, FastAPI sees request.client.host as the immediate upstream pod IP which varies per request, so each replica/pod gets its own counter row and the >=5 gate is never tripped. Mitigation: key the lockout off the email (hashed) only, or off the X-Forwarded-For header's first IP; do NOT rely on request.client.host in this environment."
+}

@@ -1,89 +1,302 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+load_dotenv()
+
 import os
-import logging
-from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
+import jwt
+import bcrypt
+import secrets
+import random
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Request, Response, Depends, APIRouter
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
 
+# ---------------- DB ----------------
+client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+db = client[os.environ["DB_NAME"]]
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+# ---------------- Auth helpers ----------------
+JWT_ALGORITHM = "HS256"
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+def hash_password(p: str) -> str:
+    return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
 
-# Create the main app without a prefix
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+def create_access_token(uid: str, email: str) -> str:
+    return jwt.encode({"sub": uid, "email": email, "type": "access",
+                       "exp": datetime.now(timezone.utc) + timedelta(minutes=60)},
+                      os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
+
+def create_refresh_token(uid: str) -> str:
+    return jwt.encode({"sub": uid, "type": "refresh",
+                       "exp": datetime.now(timezone.utc) + timedelta(days=7)},
+                      os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
+
+def set_auth_cookies(resp: Response, access: str, refresh: str):
+    resp.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=3600, path="/")
+    resp.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        h = request.headers.get("Authorization", "")
+        if h.startswith("Bearer "):
+            token = h[7:]
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(401, "Invalid token type")
+        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
+        if not user:
+            raise HTTPException(401, "User not found")
+        user["id"] = str(user.pop("_id"))
+        user.pop("password_hash", None)
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+
+# ---------------- Models ----------------
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str = Field(min_length=1)
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class UploadIn(BaseModel):
+    title: str
+    source: str = "upload"  # ai|upload
+    ratio: str = "16:9"
+    duration_sec: int = 0
+    thumbnail: Optional[str] = None
+
+class FavoriteIn(BaseModel):
+    upload_id: str
+
+# ---------------- Seeding ----------------
+SAMPLE_TITLES = [
+    "How I priced my first membership tier",
+    "Tuesday pep talk for shy creators",
+    "Behind the scenes — studio setup",
+    "Q&A: taxes, fans, & Friday-payday",
+]
+GRADIENTS = [
+    "linear-gradient(135deg, hsl(8 85% 67%), hsl(45 95% 65%))",
+    "linear-gradient(135deg, hsl(170 40% 45%), hsl(152 45% 70%))",
+    "linear-gradient(135deg, hsl(45 95% 65%), hsl(8 85% 67%))",
+    "linear-gradient(135deg, hsl(170 40% 20%), hsl(170 40% 40%))",
+]
+
+async def seed_user_data(user_id: str):
+    """Give every new user real, deterministic-but-unique baseline data."""
+    rnd = random.Random(user_id)
+    now = datetime.now(timezone.utc)
+    metrics = {
+        "user_id": user_id,
+        "earnings_cents": rnd.randint(50000, 800000),
+        "views": rnd.randint(2000, 50000),
+        "new_fans": rnd.randint(20, 600),
+        "streak_days": rnd.randint(1, 14),
+        "earnings_delta": rnd.choice(["+8%", "+12%", "+18%", "+21%"]),
+        "views_delta": rnd.choice(["+5%", "+9%", "+14%"]),
+        "fans_delta": rnd.choice(["+10%", "+15%", "+22%"]),
+        "updated_at": now,
+    }
+    await db.metrics.insert_one(metrics)
+    docs = []
+    for i, t in enumerate(SAMPLE_TITLES):
+        docs.append({
+            "user_id": user_id,
+            "title": t,
+            "source": "ai" if i % 2 == 0 else "upload",
+            "ratio": ["16:9", "9:16", "1:1", "16:9"][i],
+            "duration_sec": [252, 68, 346, 750][i],
+            "views": rnd.randint(500, 6000),
+            "thumbnail": GRADIENTS[i],
+            "created_at": now - timedelta(days=i, hours=rnd.randint(0, 12)),
+        })
+    await db.uploads.insert_many(docs)
+
+async def seed_admin():
+    email = os.environ["ADMIN_EMAIL"]
+    password = os.environ["ADMIN_PASSWORD"]
+    existing = await db.users.find_one({"email": email})
+    if existing is None:
+        res = await db.users.insert_one({
+            "email": email, "password_hash": hash_password(password),
+            "name": "Brewly Admin", "role": "admin",
+            "created_at": datetime.now(timezone.utc),
+        })
+        await seed_user_data(str(res.inserted_id))
+    elif not verify_password(password, existing["password_hash"]):
+        await db.users.update_one({"email": email}, {"$set": {"password_hash": hash_password(password)}})
+
+# ---------------- App ----------------
 app = FastAPI()
+api = APIRouter(prefix="/api")
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.login_attempts.create_index("identifier")
+    await db.uploads.create_index("user_id")
+    await db.favorites.create_index([("user_id", 1), ("upload_id", 1)], unique=True)
+    await db.metrics.create_index("user_id", unique=True)
+    await seed_admin()
 
-
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Brewly API"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+# ---------- Auth ----------
+def user_public(u: dict) -> dict:
+    return {"id": u["id"] if "id" in u else str(u["_id"]), "email": u["email"],
+            "name": u.get("name", ""), "role": u.get("role", "user")}
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api.post("/auth/register")
+async def register(body: RegisterIn, response: Response):
+    email = body.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already registered")
+    res = await db.users.insert_one({
+        "email": email, "password_hash": hash_password(body.password),
+        "name": body.name, "role": "user",
+        "created_at": datetime.now(timezone.utc),
+    })
+    uid = str(res.inserted_id)
+    await seed_user_data(uid)
+    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
+    return {"id": uid, "email": email, "name": body.name, "role": "user"}
 
-# Include the router in the main app
-app.include_router(api_router)
+@api.post("/auth/login")
+async def login(body: LoginIn, request: Request, response: Response):
+    email = body.email.lower()
+    ip = request.client.host if request.client else "unknown"
+    ident = f"{ip}:{email}"
+    rec = await db.login_attempts.find_one({"identifier": ident})
+    if rec and rec.get("count", 0) >= 5 and rec.get("locked_until") and rec["locked_until"] > datetime.now(timezone.utc):
+        raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        await db.login_attempts.update_one({"identifier": ident}, {"$inc": {"count": 1},
+            "$set": {"locked_until": datetime.now(timezone.utc) + timedelta(minutes=15)}}, upsert=True)
+        raise HTTPException(401, "Invalid email or password")
+    await db.login_attempts.delete_one({"identifier": ident})
+    uid = str(user["_id"])
+    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
+    return user_public({**user, "id": uid})
+
+@api.post("/auth/logout")
+async def logout(response: Response, _: dict = Depends(get_current_user)):
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/")
+    return {"ok": True}
+
+@api.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return user_public(user)
+
+# ---------- Per-user data ----------
+@api.get("/dashboard/metrics")
+async def get_metrics(user: dict = Depends(get_current_user)):
+    m = await db.metrics.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not m:
+        await seed_user_data(user["id"])
+        m = await db.metrics.find_one({"user_id": user["id"]}, {"_id": 0})
+    favs_count = await db.favorites.count_documents({"user_id": user["id"]})
+    uploads_count = await db.uploads.count_documents({"user_id": user["id"]})
+    return {
+        "earnings": f"${m['earnings_cents']/100:,.0f}",
+        "views": f"{m['views']/1000:.1f}k" if m["views"] >= 1000 else str(m["views"]),
+        "new_fans": m["new_fans"],
+        "streak_days": m["streak_days"],
+        "earnings_delta": m["earnings_delta"],
+        "views_delta": m["views_delta"],
+        "fans_delta": m["fans_delta"],
+        "favorites_count": favs_count,
+        "uploads_count": uploads_count,
+    }
+
+def upload_to_dict(u: dict) -> dict:
+    return {
+        "id": str(u["_id"]),
+        "title": u["title"],
+        "source": u.get("source", "upload"),
+        "ratio": u.get("ratio", "16:9"),
+        "duration_sec": u.get("duration_sec", 0),
+        "views": u.get("views", 0),
+        "thumbnail": u.get("thumbnail", GRADIENTS[0]),
+        "created_at": u["created_at"].isoformat() if isinstance(u.get("created_at"), datetime) else str(u.get("created_at", "")),
+    }
+
+@api.get("/uploads")
+async def list_uploads(user: dict = Depends(get_current_user)):
+    docs = await db.uploads.find({"user_id": user["id"]}).sort("created_at", -1).to_list(200)
+    return [upload_to_dict(d) for d in docs]
+
+@api.post("/uploads")
+async def create_upload(body: UploadIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "user_id": user["id"], "title": body.title, "source": body.source,
+        "ratio": body.ratio, "duration_sec": body.duration_sec,
+        "views": 0, "thumbnail": body.thumbnail or GRADIENTS[random.randint(0, 3)],
+        "created_at": datetime.now(timezone.utc),
+    }
+    res = await db.uploads.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return upload_to_dict(doc)
+
+@api.delete("/uploads/{upload_id}")
+async def delete_upload(upload_id: str, user: dict = Depends(get_current_user)):
+    try:
+        res = await db.uploads.delete_one({"_id": ObjectId(upload_id), "user_id": user["id"]})
+    except Exception:
+        raise HTTPException(400, "Invalid id")
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    await db.favorites.delete_many({"user_id": user["id"], "upload_id": upload_id})
+    return {"ok": True}
+
+@api.get("/favorites")
+async def list_favorites(user: dict = Depends(get_current_user)):
+    favs = await db.favorites.find({"user_id": user["id"]}).to_list(500)
+    ids = [ObjectId(f["upload_id"]) for f in favs if ObjectId.is_valid(f["upload_id"])]
+    docs = await db.uploads.find({"_id": {"$in": ids}}).to_list(500)
+    return [upload_to_dict(d) for d in docs]
+
+@api.post("/favorites")
+async def add_favorite(body: FavoriteIn, user: dict = Depends(get_current_user)):
+    try:
+        await db.favorites.update_one(
+            {"user_id": user["id"], "upload_id": body.upload_id},
+            {"$set": {"created_at": datetime.now(timezone.utc)}}, upsert=True)
+    except Exception:
+        pass
+    return {"ok": True}
+
+@api.delete("/favorites/{upload_id}")
+async def remove_favorite(upload_id: str, user: dict = Depends(get_current_user)):
+    await db.favorites.delete_one({"user_id": user["id"], "upload_id": upload_id})
+    return {"ok": True}
+
+# ---------------- Mount ----------------
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=[os.environ.get("FRONTEND_URL", "http://localhost:3000"), "http://localhost:3000"],
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

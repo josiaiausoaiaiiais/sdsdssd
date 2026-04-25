@@ -1,10 +1,11 @@
-import React from "react";
-import { Link, NavLink } from "react-router-dom";
+import React, { useState } from "react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import {
   Home, Library, Heart, Radio, Tv, BarChart3, Wand2,
-  Search, Bell, Plus, ChevronRight, Sparkles,
+  Search, Bell, Plus, ChevronRight, Sparkles, LogOut, User as UserIcon,
 } from "lucide-react";
 import { BrewlyLogo } from "./brewly/Illustrations";
+import { useAuth } from "../lib/auth";
 
 const NAV = [
   { to: "/dashboard", label: "Home", icon: Home, end: true },
@@ -74,42 +75,54 @@ const Sidebar = () => (
   </aside>
 );
 
-const TopBar = ({ searchPlaceholder = "Search your library, analytics, fans…" }) => (
-  <div className="sticky top-0 z-20 bg-background/80 backdrop-blur-md border-b border-secondary/10">
-    <div className="flex items-center gap-3 px-6 lg:px-10 py-4">
-      <div className="flex-1 max-w-xl relative" data-testid="topbar-search">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <input
-          type="text"
-          placeholder={searchPlaceholder}
-          className="w-full doodle-pill bg-surface border-secondary/30 pl-11 pr-4 py-2.5 text-sm font-semibold placeholder:text-muted-foreground focus:outline-none focus:border-secondary focus:ring-2 focus:ring-ring/40"
-          data-testid="topbar-search-input"
-        />
-      </div>
-      <div className="ml-auto flex items-center gap-2">
-        <button
-          className="doodle-pill h-11 w-11 inline-flex items-center justify-center bg-surface hover:bg-muted/50 transition-colors relative"
-          aria-label="Notifications"
-          data-testid="topbar-bell"
-        >
-          <Bell className="h-4 w-4" />
-          <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary border border-surface" />
-        </button>
-        <button className="doodle-btn btn-primary text-sm h-11 px-5" data-testid="topbar-create">
-          <Plus className="h-4 w-4" strokeWidth={3} />
-          Create
-        </button>
-        <button className="doodle-pill bg-surface flex items-center gap-2 pl-1.5 pr-3 py-1.5" data-testid="topbar-avatar">
-          <span className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-extrabold text-sm">
-            N
-          </span>
-          <span className="text-sm font-bold hidden sm:inline">Nora</span>
-          <ChevronRight className="h-4 w-4 rotate-90" />
-        </button>
+const TopBar = ({ searchPlaceholder = "Search your library, analytics, fans…" }) => {
+  const { user, logout } = useAuth();
+  const nav = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const initial = (user?.name || user?.email || "U").charAt(0).toUpperCase();
+  const displayName = user?.name?.split(" ")[0] || (user?.email ? user.email.split("@")[0] : "You");
+  const handleLogout = async () => { await logout(); nav("/login"); };
+  return (
+    <div className="sticky top-0 z-20 bg-background/80 backdrop-blur-md border-b border-secondary/10">
+      <div className="flex items-center gap-3 px-6 lg:px-10 py-4">
+        <div className="flex-1 max-w-xl relative" data-testid="topbar-search">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input type="text" placeholder={searchPlaceholder}
+            className="w-full doodle-pill bg-surface border-secondary/30 pl-11 pr-4 py-2.5 text-sm font-semibold placeholder:text-muted-foreground focus:outline-none focus:border-secondary focus:ring-2 focus:ring-ring/40"
+            data-testid="topbar-search-input" />
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button className="doodle-pill h-11 w-11 inline-flex items-center justify-center bg-surface hover:bg-muted/50 transition-colors relative" aria-label="Notifications" data-testid="topbar-bell">
+            <Bell className="h-4 w-4" />
+            <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-primary border border-surface" />
+          </button>
+          <button className="doodle-btn btn-primary text-sm h-11 px-5" data-testid="topbar-create">
+            <Plus className="h-4 w-4" strokeWidth={3} /> Create
+          </button>
+          <div className="relative">
+            <button onClick={() => setMenuOpen(!menuOpen)} className="doodle-pill bg-surface flex items-center gap-2 pl-1.5 pr-3 py-1.5" data-testid="topbar-avatar">
+              <span className="h-7 w-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-extrabold text-sm">{initial}</span>
+              <span className="text-sm font-bold hidden sm:inline">{displayName}</span>
+              <ChevronRight className="h-4 w-4 rotate-90" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 mt-2 w-56 doodle-card p-2 z-30" data-testid="user-menu">
+                <div className="px-3 py-2">
+                  <div className="font-display font-extrabold truncate">{user?.name || "Creator"}</div>
+                  <div className="text-xs text-muted-foreground truncate">{user?.email}</div>
+                </div>
+                <div className="h-px bg-secondary/10 my-1" />
+                <button onClick={handleLogout} className="w-full text-left px-3 py-2 rounded-full font-bold text-sm hover:bg-muted/40 inline-flex items-center gap-2" data-testid="logout-btn">
+                  <LogOut className="h-4 w-4" /> Log out
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 export const PageHeader = ({ eyebrow, title, subtitle, action }) => (
   <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-4" data-testid="page-header">

@@ -1,5 +1,5 @@
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Library from "@/pages/Library";
@@ -8,21 +8,34 @@ import Webinars from "@/pages/Webinars";
 import Channels from "@/pages/Channels";
 import Analytics from "@/pages/Analytics";
 import Remix from "@/pages/Remix";
+import { LoginPage, SignupPage } from "@/pages/Auth";
+import { AuthProvider, useAuth } from "@/lib/auth";
+
+function Protected({ children }) {
+  const { user } = useAuth();
+  if (user === null) return <div className="min-h-screen flex items-center justify-center bg-background"><div className="font-display text-xl">Brewing…</div></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
 
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/dashboard/library" element={<Library />} />
-          <Route path="/dashboard/favorites" element={<Favorites />} />
-          <Route path="/dashboard/webinars" element={<Webinars />} />
-          <Route path="/dashboard/channels" element={<Channels />} />
-          <Route path="/dashboard/analytics" element={<Analytics />} />
-          <Route path="/dashboard/remix" element={<Remix />} />
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/dashboard/library" element={<Protected><Library /></Protected>} />
+            <Route path="/dashboard/favorites" element={<Protected><Favorites /></Protected>} />
+            <Route path="/dashboard/webinars" element={<Protected><Webinars /></Protected>} />
+            <Route path="/dashboard/channels" element={<Protected><Channels /></Protected>} />
+            <Route path="/dashboard/analytics" element={<Protected><Analytics /></Protected>} />
+            <Route path="/dashboard/remix" element={<Protected><Remix /></Protected>} />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </div>
   );
